@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v8 (Master Valve)</title>
+    <title>Ikeda Generator v9 (True Sustain)</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; }
         
@@ -76,7 +76,7 @@
     let patDrone = new Array(16).fill(false);
 
     // Audio Nodes
-    let masterGain; // The Safety Valve
+    let masterGain; 
     let subSynth, noiseSynth, panner, dataSynth, dataAmp, loop;
 
     // -- KEYBOARD LISTENERS --
@@ -85,8 +85,8 @@
             isOptionPressed = true;
             if (Tone.context.state !== 'running') Tone.context.resume();
             
-            // OPEN THE VALVE (Allow sound)
-            if(masterGain) masterGain.gain.rampTo(1, 0.05);
+            // OPEN VALVE
+            if(masterGain) masterGain.gain.rampTo(1, 0.02);
         }
     });
 
@@ -94,14 +94,14 @@
         if (e.key === 'Alt') {
             isOptionPressed = false;
             
-            // CLOSE THE VALVE (Kill all sound instantly)
+            // CLOSE VALVE (Instant Silence)
             if(masterGain) masterGain.gain.rampTo(0, 0.05);
             
-            // Clean up internals
+            // Internal cleanup
             if(subSynth) subSynth.triggerRelease();
             if(noiseSynth) noiseSynth.triggerRelease();
             
-            // Reset Drone Volume internally so it doesn't blast when you restart
+            // Reset Drone
             if(dataAmp) {
                 dataAmp.volume.cancelScheduledValues(Tone.now());
                 dataAmp.volume.rampTo(-100, 0.05);
@@ -117,12 +117,18 @@
     function generatePatterns() {
         let kickThresh = 0.9 - (intensity * 0.4); 
         let clickThresh = 0.9 - (intensity * 0.8);
-        let droneThresh = 0.95 - (intensity * 0.6);
+        
+        // Lower drone threshold slightly to ensure we get "runs" of true
+        let droneThresh = 0.85 - (intensity * 0.5); 
 
         for (let i = 0; i < 16; i++) {
             patKick[i] = (i % 4 === 0) || (Math.random() > kickThresh);
             patClick[i] = Math.random() > clickThresh;
-            patDrone[i] = Math.random() > droneThresh;
+            
+            // Bias towards sustaining:
+            // If previous step was drone, higher chance this step is drone too
+            let sustainBias = (i > 0 && patDrone[i-1]) ? 0.2 : 0;
+            patDrone[i] = Math.random() > (droneThresh - sustainBias);
         }
     }
 
@@ -158,7 +164,7 @@
                 for (let y = 0; y < height; y+=gridSize) {
                     line(0, y, width, y);
                 }
-                gridOpacity -= 15;
+                gridOpacity -= 10; // Slower fade for visuals too
             }
         }
 
@@ -232,11 +238,11 @@
             envelope: { attack: 0.001, decay: 0.05, sustain: 0 }
         }).connect(panner);
 
-        // 3. Data Drone (Back to Continuous Oscillator)
+        // 3. Data Drone (Continuous)
         dataSynth = new Tone.Oscillator({ type: "sine", frequency: 800 }).start();
         dataAmp = new Tone.Volume(-100); // Start silent
         dataSynth.connect(dataAmp);
-        dataAmp.connect(masterGain); // Connect to safety valve
+        dataAmp.connect(masterGain); 
 
         generatePatterns();
 
@@ -272,7 +278,7 @@
             let panTarget = map(mouseX, 0, windowWidth, -1, 1, true); 
             panner.pan.rampTo(panTarget, 0.1, time);
 
-            // Trigger Kick
+            // Kick
             if (doKick) {
                 subSynth.triggerAttackRelease("C1", "8n", time);
                 Tone.Draw.schedule(() => { bgCol = 255; }, time);
@@ -280,7 +286,7 @@
                 Tone.Draw.schedule(() => { bgCol = 0; }, time);
             }
 
-            // Trigger Click
+            // Click
             if (doClick) {
                 noiseSynth.triggerAttackRelease("32n", time);
                 Tone.Draw.schedule(() => {
@@ -291,21 +297,23 @@
                 Tone.Draw.schedule(() => { barcodeActive = false; }, time);
             }
 
-            // Trigger Drone (Old Method + Safety)
+            // --- THE DRONE FIX ---
             if (doDrone) {
+                // If the drone is ON, we just tell volume to go UP.
+                // We do NOT tell it to go down.
                 let yNorm = map(mouseY, windowHeight, 0, 0, 1, true);
                 let freq;
                 if (yNorm < 0.3) freq = [200, 300, 400][Math.floor(Math.random()*3)];
                 else if (yNorm < 0.7) freq = [800, 1200, 1500][Math.floor(Math.random()*3)];
                 else freq = [2000, 2500, 3000][Math.floor(Math.random()*3)];
 
-                dataSynth.frequency.setValueAtTime(freq, time);
-                
-                // Swell Volume Up then Down
-                dataAmp.volume.rampTo(-12, 0.01, time);
-                dataAmp.volume.rampTo(-100, 0.1, time + 0.1);
+                dataSynth.frequency.rampTo(freq, 0.05, time); // Smooth pitch glide
+                dataAmp.volume.rampTo(-12, 0.05, time); // Ramp UP and stay there
                 
                 Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
+            } else {
+                // Only if the drone is OFF do we tell volume to go DOWN.
+                dataAmp.volume.rampTo(-100, 0.05, time);
             }
 
         }, "16n");
