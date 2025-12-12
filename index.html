@@ -2,34 +2,48 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda/Byetone Generator</title>
+    <title>Ikeda/Byetone Generator v2</title>
     <style>
-        body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+        body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: monospace; }
+        
+        /* Start Overlay */
         #overlay {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: white; font-family: monospace; text-align: center; cursor: pointer;
-            border: 1px solid white; padding: 20px;
+            color: white; border: 1px solid white; padding: 20px;
+            cursor: pointer; z-index: 10; text-align: center;
         }
+        
+        /* Mute Button */
+        #muteBtn {
+            position: absolute; bottom: 20px; right: 20px;
+            color: white; border: 1px solid white; padding: 10px 20px;
+            cursor: pointer; z-index: 10; background: black;
+            display: none; /* Hidden until started */
+            user-select: none;
+        }
+        #muteBtn:hover { background: #222; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 </head>
 <body>
 
-<div id="overlay">CLICK TO START SYSTEM</div>
+<div id="overlay">CLICK TO INITIALIZE SYSTEM</div>
+<div id="muteBtn">MUTE SOUND</div>
 
 <script>
     let isPlaying = false;
     let currentStep = 0;
     
-    // Visual State Variables
+    // -- Visual State --
     let bgCol = 0;
-    let drawLine = false;
-    let barHeight = 0;
+    let barcodeActive = false;
+    let barcodeSeed = 0; // Ensures barcode stays static for a moment
     let gridOpacity = 0;
 
-    // --- AUDIO SETUP ---
-    // 1. Sub Bass (Pure Sine)
+    // -- AUDIO SETUP --
+    
+    // 1. Sub Bass (Center)
     const subSynth = new Tone.MembraneSynth({
         pitchDecay: 0.05,
         octaves: 2,
@@ -37,131 +51,140 @@
         envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
     }).toDestination();
 
-    // 2. Noise/Click (Glitch)
+    // 2. Noise/Click (Panning)
+    const panner = new Tone.Panner(0).toDestination();
     const noiseSynth = new Tone.NoiseSynth({
         noise: { type: "white" },
         envelope: { attack: 0.001, decay: 0.05, sustain: 0 }
-    }).toDestination();
+    }).connect(panner);
 
-    // 3. High Frequency Sine (Data sound)
-    const dataSynth = new Tone.Oscillator({
-        type: "sine",
-        frequency: 8000
-    }).toDestination().start();
-    const dataAmp = new Tone.Volume(-60).toDestination(); // Start silent
+    // 3. Data High Freq (Center)
+    const dataSynth = new Tone.Oscillator({ type: "sine", frequency: 8000 }).toDestination().start();
+    const dataAmp = new Tone.Volume(-60).toDestination();
     dataSynth.connect(dataAmp);
 
 
-    // --- SEQUENCER ---
-    // We use Tone.Loop for precise timing
+    // -- SEQUENCER --
     const loop = new Tone.Loop((time) => {
-        // 16th note step counter
         currentStep = (currentStep + 1) % 16;
         
-        // Randomize probabilities for a generative feel
-        
-        // KICK (Sub) - Steady pulse on 1, 5, 9, 13 (4/4 feel) or random
-        if (currentStep % 4 === 0 || Math.random() > 0.9) {
+        // KICK (Sub) - Pattern or Random
+        if (currentStep % 4 === 0) {
             subSynth.triggerAttackRelease("C1", "8n", time);
-            // VISUAL TRIGGER: Invert Background (Strobe)
-            Tone.Draw.schedule(() => {
-                bgCol = bgCol === 0 ? 255 : 0; 
-            }, time);
-        } else {
-             // Reset strobe
-             Tone.Draw.schedule(() => {
-                bgCol = 0; 
-            }, time);
-        }
-
-        // CLICK (High Noise) - Random glitch patterns
-        if (Math.random() > 0.7) {
-            noiseSynth.triggerAttackRelease("32n", time);
-            // VISUAL TRIGGER: Random vertical bar
-            Tone.Draw.schedule(() => {
-                barHeight = Math.random() * window.innerHeight;
-                drawLine = true;
-            }, time);
-        } else {
-            Tone.Draw.schedule(() => {
-                drawLine = false;
-            }, time);
-        }
-
-        // DATA DRONE - Short blips
-        if (Math.random() > 0.8) {
-            dataSynth.frequency.value = [4000, 8000, 12000][Math.floor(Math.random()*3)];
-            dataAmp.volume.rampTo(-10, 0.01, time);
-            dataAmp.volume.rampTo(-60, 0.1, time + 0.05);
             
-            // VISUAL TRIGGER: Flash Grid
+            // Sync: Flash Background
+            Tone.Draw.schedule(() => { bgCol = 255; }, time);
+        } else {
+            Tone.Draw.schedule(() => { bgCol = 0; }, time);
+        }
+
+        // CLICKS (Panning)
+        if (Math.random() > 0.6) {
+            // Pan Hard Left (-1) or Hard Right (1)
+            let panVal = Math.random() > 0.5 ? -1 : 1;
+            panner.pan.setValueAtTime(panVal, time);
+            
+            noiseSynth.triggerAttackRelease("32n", time);
+
+            // Sync: Activate Barcode
             Tone.Draw.schedule(() => {
-                gridOpacity = 255;
+                barcodeActive = true;
+                barcodeSeed = Math.random() * 1000; // New barcode pattern
             }, time);
+        } else {
+            Tone.Draw.schedule(() => { barcodeActive = false; }, time);
+        }
+
+        // DATA BLIPS
+        if (Math.random() > 0.85) {
+            let freq = [8000, 10000, 14000][Math.floor(Math.random()*3)];
+            dataSynth.frequency.setValueAtTime(freq, time);
+            dataAmp.volume.rampTo(-15, 0.01, time);
+            dataAmp.volume.rampTo(-60, 0.1, time + 0.1);
+            
+            // Sync: Flash Grid
+            Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
         }
 
     }, "16n").start(0);
 
-    Tone.Transport.bpm.value = 140; // Fast Tempo for Ryoji style
+    Tone.Transport.bpm.value = 138;
 
-    // --- P5.JS VISUAL SETUP ---
+    // -- P5.JS VISUALS --
     function setup() {
         createCanvas(windowWidth, windowHeight);
         background(0);
-        rectMode(CENTER);
+        frameRate(60);
     }
 
     function draw() {
-        // 1. Background Strobe
         background(bgCol);
-
-        // Calculate contrast color (opposite of background)
         let contrast = bgCol === 0 ? 255 : 0;
-        fill(contrast);
-        stroke(contrast);
-
-        // 2. Glitch Bar (Correlates to Noise Clicks)
-        if (drawLine) {
-            let x = random(width);
-            let w = random(2, 50);
-            noStroke();
-            rect(x, height/2, w, barHeight);
+        
+        // 1. Draw Barcode (if active)
+        if (barcodeActive) {
+            stroke(contrast);
+            fill(contrast);
+            randomSeed(barcodeSeed); // Use seed to keep pattern stable for the frame
+            
+            let x = 0;
+            while(x < width) {
+                let w = random(1, 10);
+                if (random() > 0.5) {
+                    rect(x, 0, w, height);
+                }
+                x += w + 2;
+            }
         }
 
-        // 3. Data Grid (Correlates to High Freq Blips)
+        // 2. Draw Data Grid
         if (gridOpacity > 0) {
             stroke(contrast, gridOpacity);
-            noFill();
-            let gridSize = 50;
-            for (let i = 0; i < width; i+=gridSize) {
-                line(i, 0, i, height);
+            let gridSize = 40;
+            for (let y = 0; y < height; y+=gridSize) {
+                line(0, y, width, y);
+                // Draw little numbers
+                if(random() > 0.9) {
+                    noStroke();
+                    fill(contrast, gridOpacity);
+                    textSize(10);
+                    text(Math.floor(random(100,999)), random(width), y);
+                }
             }
-            gridOpacity -= 20; // Fade out quickly
+            gridOpacity -= 15; // Fade out
         }
-        
-        // 4. Center Line (Scanning aesthetic)
+
+        // 3. Center Crosshair (Always visible)
         stroke(contrast);
-        line(0, height/2, width, height/2);
-        
-        // Text info
-        noStroke();
-        fill(contrast);
-        textSize(12);
-        text("RPM: 140 | STEP: " + currentStep, 20, 30);
+        line(width/2 - 20, height/2, width/2 + 20, height/2);
+        line(width/2, height/2 - 20, width/2, height/2 + 20);
     }
 
-    function windowResized() {
-        resizeCanvas(windowWidth, windowHeight);
-    }
+    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
 
-    // --- INTERACTION ---
+    // -- UI CONTROLS --
+    
+    // Start System
     document.getElementById('overlay').addEventListener('click', async () => {
         await Tone.start();
-        if (!isPlaying) {
-            Tone.Transport.start();
-            document.getElementById('overlay').style.display = 'none';
-            isPlaying = true;
-        }
+        Tone.Transport.start();
+        document.getElementById('overlay').style.display = 'none';
+        document.getElementById('muteBtn').style.display = 'block';
+        isPlaying = true;
+    });
+
+    // Mute Button Logic
+    const muteBtn = document.getElementById('muteBtn');
+    muteBtn.addEventListener('click', () => {
+        // Toggle Mute
+        const isMuted = Tone.Destination.mute;
+        Tone.Destination.mute = !isMuted;
+        
+        // Update Button Text
+        muteBtn.innerText = !isMuted ? "MUTE SOUND" : "SOUND ON";
+        
+        // Visual feedback on button
+        muteBtn.style.opacity = !isMuted ? "1" : "0.5";
     });
 
 </script>
