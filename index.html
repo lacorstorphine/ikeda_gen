@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v3.1 (Fixed)</title>
+    <title>Ikeda Generator v3.2 (Lower Whistles)</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: monospace; user-select: none; }
         
@@ -170,10 +170,11 @@
                 Tone.Draw.schedule(() => { barcodeActive = false; }, time);
             }
 
-            // Drone
+            // Drone (Updated Frequencies)
             if (Math.random() > droneThresh) {
-                let freqArr = [4000, 8000];
-                if(intensity > 0.6) freqArr.push(12000, 15000);
+                // Frequencies are now capped at 10kHz
+                let freqArr = [3000, 5000]; 
+                if(intensity > 0.6) freqArr.push(7000, 10000); 
                 
                 let freq = freqArr[Math.floor(Math.random()*freqArr.length)];
                 dataSynth.frequency.setValueAtTime(freq, time);
