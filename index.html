@@ -84,4 +84,139 @@
     }).connect(panner);
 
     // 3. Data Drone
-    const
+    const dataSynth = new Tone.Oscillator({ type: "sine", frequency: 8000 }).toDestination().start();
+    const dataAmp = new Tone.Volume(-60).toDestination();
+    dataSynth.connect(dataAmp);
+
+
+    // -- SEQUENCER --
+    const loop = new Tone.Loop((time) => {
+        currentStep = (currentStep + 1) % 16;
+        
+        // Dynamic Thresholds based on Intensity
+        // If intensity is 0, thresholds are high (hard to trigger).
+        // If intensity is 1, thresholds are low (easy to trigger).
+        let kickThresh = 0.9 - (intensity * 0.4); // 0.9 -> 0.5
+        let clickThresh = 0.9 - (intensity * 0.8); // 0.9 -> 0.1 (Very busy at max)
+        let droneThresh = 0.95 - (intensity * 0.6);
+
+        // 1. KICK LOGIC
+        // Always play on beat 1. Random otherwise based on intensity.
+        if (currentStep % 4 === 0 || Math.random() > kickThresh) {
+            subSynth.triggerAttackRelease("C1", "8n", time);
+            Tone.Draw.schedule(() => { bgCol = 255; }, time);
+        } else {
+            Tone.Draw.schedule(() => { bgCol = 0; }, time);
+        }
+
+        // 2. CLICK LOGIC
+        if (Math.random() > clickThresh) {
+            let panVal = Math.random() > 0.5 ? -1 : 1;
+            panner.pan.setValueAtTime(panVal, time);
+            noiseSynth.triggerAttackRelease("32n", time);
+
+            Tone.Draw.schedule(() => {
+                barcodeActive = true;
+                barcodeSeed = Math.random() * 1000;
+            }, time);
+        } else {
+            Tone.Draw.schedule(() => { barcodeActive = false; }, time);
+        }
+
+        // 3. DRONE LOGIC
+        if (Math.random() > droneThresh) {
+            // Higher intensity = Higher Pitch possibility
+            let freqArr = [4000, 8000];
+            if(intensity > 0.6) freqArr.push(12000, 15000); // Add harsh freqs at high intensity
+            
+            let freq = freqArr[Math.floor(Math.random()*freqArr.length)];
+            dataSynth.frequency.setValueAtTime(freq, time);
+            
+            dataAmp.volume.rampTo(-10, 0.01, time);
+            dataAmp.volume.rampTo(-60, 0.1, time + 0.1);
+            
+            Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
+        }
+
+    }, "16n").start(0);
+
+    Tone.Transport.bpm.value = 138;
+
+    // -- P5 VISUALS --
+    function setup() {
+        createCanvas(windowWidth, windowHeight);
+        background(0);
+        rectMode(CORNER);
+    }
+
+    function draw() {
+        background(bgCol);
+        let contrast = bgCol === 0 ? 255 : 0;
+        
+        // Draw Barcode
+        if (barcodeActive) {
+            stroke(contrast);
+            fill(contrast);
+            randomSeed(barcodeSeed);
+            let x = 0;
+            // Barcode density increases with intensity
+            let density = map(intensity, 0, 1, 10, 2); 
+            while(x < width) {
+                let w = random(1, 20);
+                if (random() > 0.5) rect(x, 0, w, height);
+                x += w + density;
+            }
+        }
+
+        // Draw Grid
+        if (gridOpacity > 0) {
+            stroke(contrast, gridOpacity);
+            let gridSize = map(intensity, 0, 1, 100, 20); // Tighter grid at high intensity
+            for (let y = 0; y < height; y+=gridSize) {
+                line(0, y, width, y);
+            }
+            gridOpacity -= 15;
+        }
+
+        // Center Crosshair
+        stroke(contrast);
+        line(width/2 - 20, height/2, width/2 + 20, height/2);
+        line(width/2, height/2 - 20, width/2, height/2 + 20);
+    }
+
+    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+
+    // -- CONTROLS --
+    
+    // Slider Logic
+    const slider = document.getElementById('intensitySlider');
+    const valDisplay = document.getElementById('valDisplay');
+    
+    slider.addEventListener('input', (e) => {
+        intensity = parseFloat(e.target.value) / 100;
+        valDisplay.innerText = e.target.value;
+        
+        // Optional: Increase Tempo slightly with intensity?
+        // Tone.Transport.bpm.rampTo(130 + (intensity * 40), 0.1);
+    });
+
+    // Start
+    document.getElementById('overlay').addEventListener('click', async () => {
+        await Tone.start();
+        Tone.Transport.start();
+        document.getElementById('overlay').style.display = 'none';
+        document.getElementById('controls').style.display = 'flex';
+        isPlaying = true;
+    });
+
+    // Mute
+    const muteBtn = document.getElementById('muteBtn');
+    muteBtn.addEventListener('click', () => {
+        Tone.Destination.mute = !Tone.Destination.mute;
+        muteBtn.innerText = Tone.Destination.mute ? "SOUND ON" : "MUTE AUDIO";
+        muteBtn.style.opacity = Tone.Destination.mute ? "0.5" : "1";
+    });
+
+</script>
+</body>
+</html>
