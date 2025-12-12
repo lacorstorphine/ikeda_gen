@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v5 (Key Trigger)</title>
+    <title>Ikeda Generator v6 (Structured)</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; }
         
@@ -21,7 +21,6 @@
             color: white; z-index: 10; display: none;
         }
 
-        /* Minimal Slider Styling */
         input[type=range] {
             -webkit-appearance: none; width: 300px; background: transparent;
         }
@@ -35,6 +34,13 @@
         input[type=range]:focus { outline: none; }
         
         .label { font-size: 12px; margin-bottom: 5px; display: block;}
+        
+        /* Bar counter to visualize the A-A-A-B structure */
+        #barCounter {
+            position: absolute; top: 30px; right: 30px;
+            color: #555; font-size: 24px; font-weight: bold;
+        }
+        .active-bar { color: #fff !important; }
     </style>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
@@ -43,6 +49,10 @@
 <body>
 
 <div id="overlay">CLICK TO INITIALIZE SYSTEM</div>
+
+<div id="barCounter">
+    <span id="b1">.</span> <span id="b2">.</span> <span id="b3">.</span> <span id="b4">.</span>
+</div>
 
 <div id="controls">
     <div>
@@ -54,8 +64,8 @@
 
 <script>
     let isPlaying = false;
-    let isOptionPressed = false; // The Safety Switch
-    let currentStep = 0;
+    let isOptionPressed = false;
+    let globalStep = 0; // Infinite counter
     
     // -- Global State --
     let intensity = 0.5;
@@ -65,24 +75,61 @@
     let barcodeActive = false;
     let barcodeSeed = 0;
     let gridOpacity = 0;
+    
+    // -- SEQUENCER PATTERN MEMORY --
+    // We store the "A" pattern here
+    let patKick = new Array(16).fill(false);
+    let patClick = new Array(16).fill(false);
+    let patDrone = new Array(16).fill(false);
 
     // -- AUDIO VARIABLES --
     let subSynth, noiseSynth, panner, dataSynth, dataAmp, loop;
 
     // -- KEYBOARD LISTENERS --
     window.addEventListener('keydown', (e) => {
-        if (e.key === 'Alt') isOptionPressed = true;
+        if (e.key === 'Alt' && !isOptionPressed) {
+            isOptionPressed = true;
+            if (Tone.context.state !== 'running') Tone.context.resume();
+        }
     });
 
     window.addEventListener('keyup', (e) => {
         if (e.key === 'Alt') {
             isOptionPressed = false;
-            // Immediate cleanup on release
+            
+            // --- HARD KILL SWITCH ---
+            // 1. Visuals
             bgCol = 0;
             barcodeActive = false;
-            if(dataAmp) dataAmp.volume.rampTo(-60, 0.1); // Fade out drone instantly
+            gridOpacity = 0;
+            
+            // 2. Audio Envelopes
+            if(subSynth) subSynth.triggerRelease();
+            if(noiseSynth) noiseSynth.triggerRelease();
+            
+            // 3. Drone Volume (The critical fix)
+            // Ramp to silence instantly
+            if(dataAmp) dataAmp.volume.rampTo(-100, 0.05);
         }
     });
+
+    // -- PATTERN GENERATOR --
+    function generatePatterns() {
+        // Create a new 16-step pattern based on current intensity
+        let kickThresh = 0.9 - (intensity * 0.4); 
+        let clickThresh = 0.9 - (intensity * 0.8);
+        let droneThresh = 0.95 - (intensity * 0.6);
+
+        for (let i = 0; i < 16; i++) {
+            // Kick: Always beat 1 + random syncopation
+            patKick[i] = (i % 4 === 0) || (Math.random() > kickThresh);
+            // Click: Random glitches
+            patClick[i] = Math.random() > clickThresh;
+            // Drone: Rare data bursts
+            patDrone[i] = Math.random() > droneThresh;
+        }
+        console.log("New Pattern Generated");
+    }
 
     // -- P5 VISUALS --
     function setup() {
@@ -96,10 +143,8 @@
         background(bgCol);
         let contrast = bgCol === 0 ? 255 : 0;
         
-        // Only draw intense visuals if Option is held
         if (isOptionPressed) {
-            
-            // 1. Barcode Logic
+            // 1. Barcode
             if (barcodeActive) {
                 stroke(contrast);
                 fill(contrast);
@@ -113,7 +158,7 @@
                 }
             }
 
-            // 2. Grid Logic
+            // 2. Grid
             if (gridOpacity > 0) {
                 stroke(contrast, gridOpacity);
                 let gridSize = map(intensity, 0, 1, 100, 20);
@@ -124,45 +169,34 @@
             }
         }
 
-        // 3. SCANNER UI (Always visible, changes style based on state)
-        if(isPlaying) {
-            drawScanner(contrast);
-        }
+        if(isPlaying) drawScanner(contrast);
     }
 
     function drawScanner(col) {
-        // Change cursor style based on Key Press
         if (isOptionPressed) {
             stroke(col);
             fill(col);
         } else {
-            stroke(100); // Dim gray when inactive
+            stroke(100); 
             fill(100);
         }
         
-        // Crosshair Lines
         line(mouseX, 0, mouseX, height);
         line(0, mouseY, width, mouseY);
         
-        // Info Text
         noStroke();
         textSize(14);
         
         if (isOptionPressed) {
-            // Active Mode: Show Data
             let xStr = "X: " + nf(mouseX, 4, 0).replace(/,/g, '');
             let yStr = "Y: " + nf(mouseY, 4, 0).replace(/,/g, '');
             text(xStr + " | " + yStr, mouseX + 10, mouseY - 10);
             
-            // Active Cursor Box
             stroke(col);
             noFill();
             rect(mouseX - 10, mouseY - 10, 20, 20);
         } else {
-            // Standby Mode
             text("HOLD [OPTION]", mouseX + 10, mouseY - 10);
-            
-            // Standby X
             stroke(100);
             line(mouseX-5, mouseY-5, mouseX+5, mouseY+5);
             line(mouseX+5, mouseY-5, mouseX-5, mouseY+5);
@@ -170,6 +204,22 @@
     }
 
     function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+
+    // -- UPDATE UI --
+    function updateBarUI(barNum) {
+        // Simple visualizer for A-A-A-B
+        let bars = ['b1', 'b2', 'b3', 'b4'];
+        bars.forEach((id, index) => {
+            let el = document.getElementById(id);
+            if (index === barNum) {
+                el.innerText = index === 3 ? "!" : "■"; // '!' for chaos bar
+                el.className = "active-bar";
+            } else {
+                el.innerText = ".";
+                el.className = "";
+            }
+        });
+    }
 
     // -- AUDIO INIT --
     async function initAudio() {
@@ -189,37 +239,67 @@
             envelope: { attack: 0.001, decay: 0.05, sustain: 0 }
         }).connect(panner);
 
-        // 3. Data Drone
+        // 3. Data Drone (Starts Silent)
         dataSynth = new Tone.Oscillator({ type: "sine", frequency: 800 }).toDestination().start();
-        dataAmp = new Tone.Volume(-60).toDestination();
+        dataAmp = new Tone.Volume(-100).toDestination(); 
         dataSynth.connect(dataAmp);
+
+        // Generate initial pattern
+        generatePatterns();
 
         // 4. Sequencer
         loop = new Tone.Loop((time) => {
-            currentStep = (currentStep + 1) % 16;
+            // Keep counting steps even if silent (keeps the "radio" running)
+            globalStep++;
             
-            // --- SAFETY SWITCH ---
-            // If Option key is NOT pressed, do nothing this step.
+            let phraseStep = globalStep % 64; // 0-63 (4 bars of 16)
+            let beatStep = globalStep % 16;   // 0-15
+            let barNum = Math.floor(phraseStep / 16); // 0, 1, 2, 3
+
+            // Update UI dot counter
+            Tone.Draw.schedule(() => updateBarUI(barNum), time);
+
+            // A. NEW CYCLE? Generate new patterns for next time
+            if (phraseStep === 0) {
+                generatePatterns();
+            }
+
+            // --- SILENCE CHECK ---
             if (!isOptionPressed) return;
 
-            let kickThresh = 0.9 - (intensity * 0.4); 
-            let clickThresh = 0.9 - (intensity * 0.8);
-            let droneThresh = 0.95 - (intensity * 0.6);
+            // --- LOGIC: A-A-A-B ---
+            let doKick, doClick, doDrone;
 
-            // A. UPDATE PANNING
+            if (barNum < 3) {
+                // BARS 0, 1, 2: Use Memory (Structured)
+                doKick = patKick[beatStep];
+                doClick = patClick[beatStep];
+                doDrone = patDrone[beatStep];
+            } else {
+                // BAR 3: CHAOS (Improvised Fill)
+                // We use random rolls just like the old version
+                let kickThresh = 0.9 - (intensity * 0.4); 
+                let clickThresh = 0.9 - (intensity * 0.8);
+                let droneThresh = 0.95 - (intensity * 0.6);
+                
+                doKick = (beatStep % 4 === 0) || (Math.random() > kickThresh);
+                doClick = Math.random() > clickThresh;
+                doDrone = Math.random() > droneThresh;
+            }
+
+            // B. UPDATE PANNING
             let panTarget = map(mouseX, 0, windowWidth, -1, 1, true); 
             panner.pan.rampTo(panTarget, 0.1, time);
 
-            // B. KICK
-            if (currentStep % 4 === 0 || Math.random() > kickThresh) {
+            // C. TRIGGER SOUNDS
+            if (doKick) {
                 subSynth.triggerAttackRelease("C1", "8n", time);
                 Tone.Draw.schedule(() => { bgCol = 255; }, time);
             } else {
                 Tone.Draw.schedule(() => { bgCol = 0; }, time);
             }
 
-            // C. CLICK
-            if (Math.random() > clickThresh) {
+            if (doClick) {
                 noiseSynth.triggerAttackRelease("32n", time);
                 Tone.Draw.schedule(() => {
                     barcodeActive = true;
@@ -229,8 +309,7 @@
                 Tone.Draw.schedule(() => { barcodeActive = false; }, time);
             }
 
-            // D. DRONE
-            if (Math.random() > droneThresh) {
+            if (doDrone) {
                 let yNorm = map(mouseY, windowHeight, 0, 0, 1, true);
                 
                 let freq;
@@ -241,7 +320,7 @@
                 dataSynth.frequency.setValueAtTime(freq, time);
                 
                 dataAmp.volume.rampTo(-12, 0.01, time);
-                dataAmp.volume.rampTo(-60, 0.1, time + 0.1);
+                dataAmp.volume.rampTo(-100, 0.1, time + 0.1);
                 
                 Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
             }
@@ -274,7 +353,6 @@
             });
         }
     });
-
 </script>
 </body>
 </html>
