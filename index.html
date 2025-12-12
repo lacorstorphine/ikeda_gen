@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v7 (Envelope Fix)</title>
+    <title>Ikeda Generator v8 (Master Valve)</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; }
         
@@ -71,14 +71,13 @@
     let barcodeSeed = 0;
     let gridOpacity = 0;
     
-    // Pattern Memory
     let patKick = new Array(16).fill(false);
     let patClick = new Array(16).fill(false);
     let patDrone = new Array(16).fill(false);
 
     // Audio Nodes
-    let masterGain; // The Safety Guillotine
-    let subSynth, noiseSynth, panner, dataSynth, loop;
+    let masterGain; // The Safety Valve
+    let subSynth, noiseSynth, panner, dataSynth, dataAmp, loop;
 
     // -- KEYBOARD LISTENERS --
     window.addEventListener('keydown', (e) => {
@@ -86,7 +85,7 @@
             isOptionPressed = true;
             if (Tone.context.state !== 'running') Tone.context.resume();
             
-            // Open the Master Gate
+            // OPEN THE VALVE (Allow sound)
             if(masterGain) masterGain.gain.rampTo(1, 0.05);
         }
     });
@@ -95,16 +94,19 @@
         if (e.key === 'Alt') {
             isOptionPressed = false;
             
-            // --- THE SAFETY GUILLOTINE ---
-            // 1. Cut the master output instantly
+            // CLOSE THE VALVE (Kill all sound instantly)
             if(masterGain) masterGain.gain.rampTo(0, 0.05);
             
-            // 2. Kill Envelopes (Clean up)
+            // Clean up internals
             if(subSynth) subSynth.triggerRelease();
             if(noiseSynth) noiseSynth.triggerRelease();
-            if(dataSynth) dataSynth.triggerRelease(); // This is the new fix
+            
+            // Reset Drone Volume internally so it doesn't blast when you restart
+            if(dataAmp) {
+                dataAmp.volume.cancelScheduledValues(Tone.now());
+                dataAmp.volume.rampTo(-100, 0.05);
+            }
 
-            // 3. Kill Visuals
             bgCol = 0;
             barcodeActive = false;
             gridOpacity = 0;
@@ -214,8 +216,8 @@
         await Tone.start();
         console.log("Audio Context Started");
 
-        // 0. MASTER SAFETY GATE
-        masterGain = new Tone.Gain(0).toDestination(); // Start muted
+        // 0. MASTER SAFETY VALVE
+        masterGain = new Tone.Gain(0).toDestination();
 
         // 1. Sub Bass
         subSynth = new Tone.MembraneSynth({
@@ -230,12 +232,11 @@
             envelope: { attack: 0.001, decay: 0.05, sustain: 0 }
         }).connect(panner);
 
-        // 3. Data Drone (THE FIX: Using Synth instead of Oscillator)
-        dataSynth = new Tone.Synth({
-            oscillator: { type: "sine" },
-            envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.5 }
-        }).connect(masterGain);
-        dataSynth.volume.value = -12; // Set fixed mixing volume
+        // 3. Data Drone (Back to Continuous Oscillator)
+        dataSynth = new Tone.Oscillator({ type: "sine", frequency: 800 }).start();
+        dataAmp = new Tone.Volume(-100); // Start silent
+        dataSynth.connect(dataAmp);
+        dataAmp.connect(masterGain); // Connect to safety valve
 
         generatePatterns();
 
@@ -249,7 +250,6 @@
 
             if (phraseStep === 0) generatePatterns();
 
-            // Crucial: If key is up, do not schedule ANYTHING
             if (!isOptionPressed) return;
 
             let doKick, doClick, doDrone;
@@ -291,7 +291,7 @@
                 Tone.Draw.schedule(() => { barcodeActive = false; }, time);
             }
 
-            // Trigger Drone (New Method)
+            // Trigger Drone (Old Method + Safety)
             if (doDrone) {
                 let yNorm = map(mouseY, windowHeight, 0, 0, 1, true);
                 let freq;
@@ -299,9 +299,11 @@
                 else if (yNorm < 0.7) freq = [800, 1200, 1500][Math.floor(Math.random()*3)];
                 else freq = [2000, 2500, 3000][Math.floor(Math.random()*3)];
 
-                // Instead of volume automation, we Trigger Attack Release
-                // This ensures it has a definite end time
-                dataSynth.triggerAttackRelease(freq, "16n", time);
+                dataSynth.frequency.setValueAtTime(freq, time);
+                
+                // Swell Volume Up then Down
+                dataAmp.volume.rampTo(-12, 0.01, time);
+                dataAmp.volume.rampTo(-100, 0.1, time + 0.1);
                 
                 Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
             }
