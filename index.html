@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v3.2 (Lower Whistles)</title>
+    <title>Ikeda Generator v3.2 (Low Pitch)</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: monospace; user-select: none; }
         
@@ -135,8 +135,9 @@
             envelope: { attack: 0.001, decay: 0.05, sustain: 0 }
         }).connect(panner);
 
-        // 3. Data Drone
-        dataSynth = new Tone.Oscillator({ type: "sine", frequency: 8000 }).toDestination().start();
+        // 3. Data Drone (LOWERED PITCH)
+        // Starting frequency is now 800Hz (Mid-range beep)
+        dataSynth = new Tone.Oscillator({ type: "sine", frequency: 800 }).toDestination().start();
         dataAmp = new Tone.Volume(-60).toDestination();
         dataSynth.connect(dataAmp);
 
@@ -170,16 +171,17 @@
                 Tone.Draw.schedule(() => { barcodeActive = false; }, time);
             }
 
-            // Drone (Updated Frequencies)
+            // Drone
             if (Math.random() > droneThresh) {
-                // Frequencies are now capped at 10kHz
-                let freqArr = [3000, 5000]; 
-                if(intensity > 0.6) freqArr.push(7000, 10000); 
+                // --- DRASTICALLY LOWERED FREQUENCIES ---
+                // Range: 800Hz to 3000Hz (Comfortable Beeps)
+                let freqArr = [800, 1200]; 
+                if(intensity > 0.5) freqArr.push(2000, 3000); 
                 
                 let freq = freqArr[Math.floor(Math.random()*freqArr.length)];
                 dataSynth.frequency.setValueAtTime(freq, time);
                 
-                dataAmp.volume.rampTo(-10, 0.01, time);
+                dataAmp.volume.rampTo(-12, 0.01, time);
                 dataAmp.volume.rampTo(-60, 0.1, time + 0.1);
                 
                 Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
