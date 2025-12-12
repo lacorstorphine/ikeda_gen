@@ -2,11 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v6 (Structured)</title>
+    <title>Ikeda Generator v6.1 (Ghost Fix)</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; }
         
-        /* -- UI Elements -- */
         #overlay {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             color: white; border: 1px solid white; padding: 20px;
@@ -35,7 +34,6 @@
         
         .label { font-size: 12px; margin-bottom: 5px; display: block;}
         
-        /* Bar counter to visualize the A-A-A-B structure */
         #barCounter {
             position: absolute; top: 30px; right: 30px;
             color: #555; font-size: 24px; font-weight: bold;
@@ -65,24 +63,18 @@
 <script>
     let isPlaying = false;
     let isOptionPressed = false;
-    let globalStep = 0; // Infinite counter
+    let globalStep = 0;
     
-    // -- Global State --
     let intensity = 0.5;
-
-    // -- Visual State --
     let bgCol = 0;
     let barcodeActive = false;
     let barcodeSeed = 0;
     let gridOpacity = 0;
     
-    // -- SEQUENCER PATTERN MEMORY --
-    // We store the "A" pattern here
     let patKick = new Array(16).fill(false);
     let patClick = new Array(16).fill(false);
     let patDrone = new Array(16).fill(false);
 
-    // -- AUDIO VARIABLES --
     let subSynth, noiseSynth, panner, dataSynth, dataAmp, loop;
 
     // -- KEYBOARD LISTENERS --
@@ -97,38 +89,34 @@
         if (e.key === 'Alt') {
             isOptionPressed = false;
             
-            // --- HARD KILL SWITCH ---
-            // 1. Visuals
+            // --- THE GHOST FIX ---
             bgCol = 0;
             barcodeActive = false;
             gridOpacity = 0;
             
-            // 2. Audio Envelopes
             if(subSynth) subSynth.triggerRelease();
             if(noiseSynth) noiseSynth.triggerRelease();
             
-            // 3. Drone Volume (The critical fix)
-            // Ramp to silence instantly
-            if(dataAmp) dataAmp.volume.rampTo(-100, 0.05);
+            if(dataAmp) {
+                // 1. Cancel any volume changes scheduled for the future
+                dataAmp.volume.cancelScheduledValues(Tone.now());
+                // 2. Drop volume to silence immediately
+                dataAmp.volume.rampTo(-100, 0.05);
+            }
         }
     });
 
     // -- PATTERN GENERATOR --
     function generatePatterns() {
-        // Create a new 16-step pattern based on current intensity
         let kickThresh = 0.9 - (intensity * 0.4); 
         let clickThresh = 0.9 - (intensity * 0.8);
         let droneThresh = 0.95 - (intensity * 0.6);
 
         for (let i = 0; i < 16; i++) {
-            // Kick: Always beat 1 + random syncopation
             patKick[i] = (i % 4 === 0) || (Math.random() > kickThresh);
-            // Click: Random glitches
             patClick[i] = Math.random() > clickThresh;
-            // Drone: Rare data bursts
             patDrone[i] = Math.random() > droneThresh;
         }
-        console.log("New Pattern Generated");
     }
 
     // -- P5 VISUALS --
@@ -144,7 +132,6 @@
         let contrast = bgCol === 0 ? 255 : 0;
         
         if (isOptionPressed) {
-            // 1. Barcode
             if (barcodeActive) {
                 stroke(contrast);
                 fill(contrast);
@@ -158,7 +145,6 @@
                 }
             }
 
-            // 2. Grid
             if (gridOpacity > 0) {
                 stroke(contrast, gridOpacity);
                 let gridSize = map(intensity, 0, 1, 100, 20);
@@ -205,14 +191,12 @@
 
     function windowResized() { resizeCanvas(windowWidth, windowHeight); }
 
-    // -- UPDATE UI --
     function updateBarUI(barNum) {
-        // Simple visualizer for A-A-A-B
         let bars = ['b1', 'b2', 'b3', 'b4'];
         bars.forEach((id, index) => {
             let el = document.getElementById(id);
             if (index === barNum) {
-                el.innerText = index === 3 ? "!" : "■"; // '!' for chaos bar
+                el.innerText = index === 3 ? "!" : "■";
                 el.className = "active-bar";
             } else {
                 el.innerText = ".";
@@ -226,58 +210,43 @@
         await Tone.start();
         console.log("Audio Context Started");
 
-        // 1. Sub Bass
         subSynth = new Tone.MembraneSynth({
             pitchDecay: 0.05, octaves: 2, oscillator: { type: "sine" },
             envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
         }).toDestination();
 
-        // 2. Glitch
         panner = new Tone.Panner(0).toDestination();
         noiseSynth = new Tone.NoiseSynth({
             noise: { type: "white" },
             envelope: { attack: 0.001, decay: 0.05, sustain: 0 }
         }).connect(panner);
 
-        // 3. Data Drone (Starts Silent)
         dataSynth = new Tone.Oscillator({ type: "sine", frequency: 800 }).toDestination().start();
         dataAmp = new Tone.Volume(-100).toDestination(); 
         dataSynth.connect(dataAmp);
 
-        // Generate initial pattern
         generatePatterns();
 
-        // 4. Sequencer
         loop = new Tone.Loop((time) => {
-            // Keep counting steps even if silent (keeps the "radio" running)
             globalStep++;
             
-            let phraseStep = globalStep % 64; // 0-63 (4 bars of 16)
-            let beatStep = globalStep % 16;   // 0-15
-            let barNum = Math.floor(phraseStep / 16); // 0, 1, 2, 3
+            let phraseStep = globalStep % 64; 
+            let beatStep = globalStep % 16;   
+            let barNum = Math.floor(phraseStep / 16); 
 
-            // Update UI dot counter
             Tone.Draw.schedule(() => updateBarUI(barNum), time);
 
-            // A. NEW CYCLE? Generate new patterns for next time
-            if (phraseStep === 0) {
-                generatePatterns();
-            }
+            if (phraseStep === 0) generatePatterns();
 
-            // --- SILENCE CHECK ---
             if (!isOptionPressed) return;
 
-            // --- LOGIC: A-A-A-B ---
             let doKick, doClick, doDrone;
 
             if (barNum < 3) {
-                // BARS 0, 1, 2: Use Memory (Structured)
                 doKick = patKick[beatStep];
                 doClick = patClick[beatStep];
                 doDrone = patDrone[beatStep];
             } else {
-                // BAR 3: CHAOS (Improvised Fill)
-                // We use random rolls just like the old version
                 let kickThresh = 0.9 - (intensity * 0.4); 
                 let clickThresh = 0.9 - (intensity * 0.8);
                 let droneThresh = 0.95 - (intensity * 0.6);
@@ -287,11 +256,9 @@
                 doDrone = Math.random() > droneThresh;
             }
 
-            // B. UPDATE PANNING
             let panTarget = map(mouseX, 0, windowWidth, -1, 1, true); 
             panner.pan.rampTo(panTarget, 0.1, time);
 
-            // C. TRIGGER SOUNDS
             if (doKick) {
                 subSynth.triggerAttackRelease("C1", "8n", time);
                 Tone.Draw.schedule(() => { bgCol = 255; }, time);
@@ -319,10 +286,12 @@
 
                 dataSynth.frequency.setValueAtTime(freq, time);
                 
-                dataAmp.volume.rampTo(-12, 0.01, time);
-                dataAmp.volume.rampTo(-100, 0.1, time + 0.1);
-                
-                Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
+                // Double check key state before scheduling volume
+                if(isOptionPressed) {
+                    dataAmp.volume.rampTo(-12, 0.01, time);
+                    dataAmp.volume.rampTo(-100, 0.1, time + 0.1);
+                    Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
+                }
             }
 
         }, "16n");
@@ -333,7 +302,6 @@
         isPlaying = true;
     }
 
-    // -- CONTROLS --
     const slider = document.getElementById('intensitySlider');
     const valDisplay = document.getElementById('valDisplay');
     slider.addEventListener('input', (e) => {
