@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v4 (The Scanner)</title>
+    <title>Ikeda Generator v5 (Key Trigger)</title>
     <style>
-        body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; /* Hide default cursor */ }
+        body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; }
         
         /* -- UI Elements -- */
         #overlay {
@@ -34,11 +34,6 @@
         }
         input[type=range]:focus { outline: none; }
         
-        #muteBtn {
-            cursor: pointer; padding: 5px 10px; border: 1px solid white;
-        }
-        #muteBtn:hover { background: #fff; color: #000; }
-
         .label { font-size: 12px; margin-bottom: 5px; display: block;}
     </style>
     
@@ -47,18 +42,19 @@
 </head>
 <body>
 
-<div id="overlay">CLICK TO INITIALIZE SCANNER</div>
+<div id="overlay">CLICK TO INITIALIZE SYSTEM</div>
 
 <div id="controls">
     <div>
         <span class="label">INTENSITY_REQ <span id="valDisplay">50</span>%</span>
         <input type="range" id="intensitySlider" min="0" max="100" value="50">
     </div>
-    <div id="muteBtn">MUTE AUDIO</div>
+    <div style="font-size: 12px; color: #888;">HOLD [OPTION/ALT] TO SCAN</div>
 </div>
 
 <script>
     let isPlaying = false;
+    let isOptionPressed = false; // The Safety Switch
     let currentStep = 0;
     
     // -- Global State --
@@ -73,6 +69,21 @@
     // -- AUDIO VARIABLES --
     let subSynth, noiseSynth, panner, dataSynth, dataAmp, loop;
 
+    // -- KEYBOARD LISTENERS --
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Alt') isOptionPressed = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (e.key === 'Alt') {
+            isOptionPressed = false;
+            // Immediate cleanup on release
+            bgCol = 0;
+            barcodeActive = false;
+            if(dataAmp) dataAmp.volume.rampTo(-60, 0.1); // Fade out drone instantly
+        }
+    });
+
     // -- P5 VISUALS --
     function setup() {
         createCanvas(windowWidth, windowHeight);
@@ -85,57 +96,77 @@
         background(bgCol);
         let contrast = bgCol === 0 ? 255 : 0;
         
-        // 1. Barcode Logic
-        if (barcodeActive) {
-            stroke(contrast);
-            fill(contrast);
-            randomSeed(barcodeSeed);
-            let x = 0;
-            let density = map(intensity, 0, 1, 15, 2); 
-            while(x < width) {
-                let w = random(1, 10);
-                if (random() > 0.5) rect(x, 0, w, height);
-                x += w + density;
+        // Only draw intense visuals if Option is held
+        if (isOptionPressed) {
+            
+            // 1. Barcode Logic
+            if (barcodeActive) {
+                stroke(contrast);
+                fill(contrast);
+                randomSeed(barcodeSeed);
+                let x = 0;
+                let density = map(intensity, 0, 1, 15, 2); 
+                while(x < width) {
+                    let w = random(1, 10);
+                    if (random() > 0.5) rect(x, 0, w, height);
+                    x += w + density;
+                }
+            }
+
+            // 2. Grid Logic
+            if (gridOpacity > 0) {
+                stroke(contrast, gridOpacity);
+                let gridSize = map(intensity, 0, 1, 100, 20);
+                for (let y = 0; y < height; y+=gridSize) {
+                    line(0, y, width, y);
+                }
+                gridOpacity -= 15;
             }
         }
 
-        // 2. Grid Logic
-        if (gridOpacity > 0) {
-            stroke(contrast, gridOpacity);
-            let gridSize = map(intensity, 0, 1, 100, 20);
-            for (let y = 0; y < height; y+=gridSize) {
-                line(0, y, width, y);
-            }
-            gridOpacity -= 15;
-        }
-
-        // 3. SCANNER INTERFACE (Mouse Interaction)
-        // Only draw if started to avoid confusion
+        // 3. SCANNER UI (Always visible, changes style based on state)
         if(isPlaying) {
             drawScanner(contrast);
         }
     }
 
     function drawScanner(col) {
-        stroke(col);
-        noFill();
+        // Change cursor style based on Key Press
+        if (isOptionPressed) {
+            stroke(col);
+            fill(col);
+        } else {
+            stroke(100); // Dim gray when inactive
+            fill(100);
+        }
         
         // Crosshair Lines
         line(mouseX, 0, mouseX, height);
         line(0, mouseY, width, mouseY);
         
-        // Data Coordinates Text
+        // Info Text
         noStroke();
-        fill(col);
         textSize(14);
-        let xStr = "X: " + nf(mouseX, 4, 0).replace(/,/g, '');
-        let yStr = "Y: " + nf(mouseY, 4, 0).replace(/,/g, '');
-        text(xStr + " | " + yStr, mouseX + 10, mouseY - 10);
-
-        // Little box around cursor
-        stroke(col);
-        noFill();
-        rect(mouseX - 10, mouseY - 10, 20, 20);
+        
+        if (isOptionPressed) {
+            // Active Mode: Show Data
+            let xStr = "X: " + nf(mouseX, 4, 0).replace(/,/g, '');
+            let yStr = "Y: " + nf(mouseY, 4, 0).replace(/,/g, '');
+            text(xStr + " | " + yStr, mouseX + 10, mouseY - 10);
+            
+            // Active Cursor Box
+            stroke(col);
+            noFill();
+            rect(mouseX - 10, mouseY - 10, 20, 20);
+        } else {
+            // Standby Mode
+            text("HOLD [OPTION]", mouseX + 10, mouseY - 10);
+            
+            // Standby X
+            stroke(100);
+            line(mouseX-5, mouseY-5, mouseX+5, mouseY+5);
+            line(mouseX+5, mouseY-5, mouseX-5, mouseY+5);
+        }
     }
 
     function windowResized() { resizeCanvas(windowWidth, windowHeight); }
@@ -151,7 +182,7 @@
             envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
         }).toDestination();
 
-        // 2. Glitch (Connects to Panner)
+        // 2. Glitch
         panner = new Tone.Panner(0).toDestination();
         noiseSynth = new Tone.NoiseSynth({
             noise: { type: "white" },
@@ -167,17 +198,19 @@
         loop = new Tone.Loop((time) => {
             currentStep = (currentStep + 1) % 16;
             
+            // --- SAFETY SWITCH ---
+            // If Option key is NOT pressed, do nothing this step.
+            if (!isOptionPressed) return;
+
             let kickThresh = 0.9 - (intensity * 0.4); 
             let clickThresh = 0.9 - (intensity * 0.8);
             let droneThresh = 0.95 - (intensity * 0.6);
 
-            // --- A. PANNING LOGIC (Controlled by Mouse X) ---
-            // Map MouseX (0 to Width) -> Pan (-1 to 1)
-            // Clamp ensures we don't go out of bounds if mouse leaves window
+            // A. UPDATE PANNING
             let panTarget = map(mouseX, 0, windowWidth, -1, 1, true); 
             panner.pan.rampTo(panTarget, 0.1, time);
 
-            // --- B. KICK ---
+            // B. KICK
             if (currentStep % 4 === 0 || Math.random() > kickThresh) {
                 subSynth.triggerAttackRelease("C1", "8n", time);
                 Tone.Draw.schedule(() => { bgCol = 255; }, time);
@@ -185,7 +218,7 @@
                 Tone.Draw.schedule(() => { bgCol = 0; }, time);
             }
 
-            // --- C. CLICK ---
+            // C. CLICK
             if (Math.random() > clickThresh) {
                 noiseSynth.triggerAttackRelease("32n", time);
                 Tone.Draw.schedule(() => {
@@ -196,24 +229,14 @@
                 Tone.Draw.schedule(() => { barcodeActive = false; }, time);
             }
 
-            // --- D. DRONE (Controlled by Mouse Y) ---
+            // D. DRONE
             if (Math.random() > droneThresh) {
-                
-                // Map MouseY (Height to 0) -> Freq (Low to High)
-                // Note: MouseY 0 is top. We want Top = High Pitch.
                 let yNorm = map(mouseY, windowHeight, 0, 0, 1, true);
                 
                 let freq;
-                if (yNorm < 0.3) {
-                     // Bottom of screen: Low Rumbles
-                    freq = [200, 300, 400][Math.floor(Math.random()*3)];
-                } else if (yNorm < 0.7) {
-                    // Middle of screen: Mid Beeps
-                    freq = [800, 1200, 1500][Math.floor(Math.random()*3)];
-                } else {
-                    // Top of screen: High Data (Capped at 3000Hz for comfort)
-                    freq = [2000, 2500, 3000][Math.floor(Math.random()*3)];
-                }
+                if (yNorm < 0.3) freq = [200, 300, 400][Math.floor(Math.random()*3)];
+                else if (yNorm < 0.7) freq = [800, 1200, 1500][Math.floor(Math.random()*3)];
+                else freq = [2000, 2500, 3000][Math.floor(Math.random()*3)];
 
                 dataSynth.frequency.setValueAtTime(freq, time);
                 
@@ -244,19 +267,12 @@
             initAudio().then(() => {
                 document.getElementById('overlay').style.display = 'none';
                 document.getElementById('controls').style.display = 'flex';
-                document.body.style.cursor = 'none'; // Ensure cursor hides
+                document.body.style.cursor = 'none';
             }).catch(e => {
                 console.error(e);
                 alert("Audio init failed.");
             });
         }
-    });
-
-    const muteBtn = document.getElementById('muteBtn');
-    muteBtn.addEventListener('click', () => {
-        Tone.Destination.mute = !Tone.Destination.mute;
-        muteBtn.innerText = Tone.Destination.mute ? "SOUND ON" : "MUTE AUDIO";
-        muteBtn.style.opacity = Tone.Destination.mute ? "0.5" : "1";
     });
 
 </script>
