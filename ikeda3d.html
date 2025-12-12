@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ikeda Generator v10 (3D Tunnel)</title>
+    <style>
+        body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; }
+        
+        #overlay {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; border: 1px solid white; padding: 20px;
+            cursor: pointer; z-index: 20; text-align: center;
+            background: rgba(0,0,0,0.8);
+            transition: opacity 0.5s;
+        }
+        
+        #controls {
+            position: absolute; bottom: 30px; left: 30px; right: 30px;
+            display: flex; justify-content: space-between; align-items: center;
+            color: white; z-index: 10; display: none;
+        }
+
+        input[type=range] {
+            -webkit-appearance: none; width: 300px; background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 20px; width: 10px; background: #fff;
+            cursor: pointer; margin-top: -8px; border: 1px solid #000;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 2px; cursor: pointer; background: #555;
+        }
+        input[type=range]:focus { outline: none; }
+        
+        .label { font-size: 12px; margin-bottom: 5px; display: block;}
+        
+        #barCounter {
+            position: absolute; top: 30px; right: 30px;
+            color: #555; font-size: 24px; font-weight: bold;
+        }
+        .active-bar { color: #fff !important; }
+    </style>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+</head>
+<body>
+
+<div id="overlay">CLICK TO INITIALIZE 3D SYSTEM</div>
+
+<div id="barCounter">
+    <span id="b1">.</span> <span id="b2">.</span> <span id="b3">.</span> <span id="b4">.</span>
+</div>
+
+<div id="controls">
+    <div>
+        <span class="label">INTENSITY_REQ <span id="valDisplay">50</span>%</span>
+        <input type="range" id="intensitySlider" min="0" max="100" value="50">
+    </div>
+    <div style="font-size: 12px; color: #888;">HOLD [OPTION/ALT] TO SCAN</div>
+</div>
+
+<script>
+    let isPlaying = false;
+    let isOptionPressed = false;
+    let globalStep = 0;
+    
+    let intensity = 0.5;
+    
+    // 3D Visual State
+    let travelSpeed = 20;
+    let zOffset = 0;
+    let flashIntensity = 0;
+    let kickShake = 0;
+    let activeMonoliths = []; // Array to store floating 3D bars
+
+    // Pattern Memory
+    let patKick = new Array(16).fill(false);
+    let patClick = new Array(16).fill(false);
+    let patDrone = new Array(16).fill(false);
+
+    // Audio Nodes
+    let masterGain, subSynth, noiseSynth, panner, dataSynth, dataAmp, loop;
+
+    // -- KEYBOARD LISTENERS --
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Alt' && !isOptionPressed) {
+            isOptionPressed = true;
+            if (Tone.context.state !== 'running') Tone.context.resume();
+            if(masterGain) masterGain.gain.rampTo(1, 0.02);
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (e.key === 'Alt') {
+            isOptionPressed = false;
+            if(masterGain) masterGain.gain.rampTo(0, 0.05);
+            
+            // Clean up
+            if(subSynth) subSynth.triggerRelease();
+            if(noiseSynth) noiseSynth.triggerRelease();
+            if(dataAmp) {
+                dataAmp.volume.cancelScheduledValues(Tone.now());
+                dataAmp.volume.rampTo(-100, 0.05);
+            }
+            
+            // Clear Visuals
+            activeMonoliths = [];
+            flashIntensity = 0;
+        }
+    });
+
+    // -- PATTERN GENERATOR --
+    function generatePatterns() {
+        let kickThresh = 0.9 - (intensity * 0.4); 
+        let clickThresh = 0.9 - (intensity * 0.8);
+        let droneThresh = 0.85 - (intensity * 0.5); 
+
+        for (let i = 0; i < 16; i++) {
+            patKick[i] = (i % 4 === 0) || (Math.random() > kickThresh);
+            patClick[i] = Math.random() > clickThresh;
+            let sustainBias = (i > 0 && patDrone[i-1]) ? 0.3 : 0;
+            patDrone[i] = Math.random() > (droneThresh - sustainBias);
+        }
+    }
+
+    // -- P5 3D SETUP --
+    function setup() {
+        // WEBGL MODE ACTIVATED
+        createCanvas(windowWidth, windowHeight, WEBGL);
+        background(0);
+        
+        // Use a simpler font standard for WEBGL (text is harder in 3D)
+        textFont('Courier New');
+    }
+
+    function draw() {
+        background(0);
+        
+        // 1. Camera Control
+        // Map mouse to rotation. 
+        // Note: in WEBGL (0,0) is center.
+        let camX = map(mouseX, 0, width, -200, 200);
+        let camY = map(mouseY, 0, height, -200, 200);
+        
+        // Apply Kick Shake
+        if (kickShake > 0) {
+            camY += random(-kickShake, kickShake);
+            kickShake *= 0.8; // Dampen shake
+        }
+        
+        camera(camX, camY, (height/2) / tan(PI/6), 0, 0, 0, 0, 1, 0);
+
+        // 2. Flash Effect (Strobe)
+        if (flashIntensity > 0) {
+            // Draw a big plane right in front of camera
+            push();
+            translate(0, 0, 100);
+            noStroke();
+            fill(255, flashIntensity);
+            plane(width * 2, height * 2);
+            pop();
+            flashIntensity -= 20; // Fade out
+        }
+
+        // Only draw the world if Option is held (or just draw idle grid)
+        
+        // 3. Draw The Tunnel Grid
+        stroke(100);
+        strokeWeight(1);
+        noFill();
+        
+        if (isOptionPressed) {
+            zOffset += travelSpeed + (intensity * 20); // Move forward
+        }
+        
+        // Floor and Ceiling
+        let spacing = 100;
+        let tunnelSize = 2000;
+        let segments = 20;
+        
+        // Grid lines moving towards us
+        for (let i = 0; i < segments; i++) {
+            let zPos = ((zOffset + i * spacing) % tunnelSize) - tunnelSize;
+            
+            // Map opacity to fade in distance
+            let alpha = map(zPos, -tunnelSize, 0, 0, 255);
+            stroke(255, alpha);
+            
+            // Floor Line
+            line(-width, 200, zPos, width, 200, zPos);
+            // Ceiling Line
+            line(-width, -200, zPos, width, -200, zPos);
+        }
+        
+        // Longitudinal lines (perspective lines)
+        for (let x = -width; x < width; x += 200) {
+            stroke(100, 100);
+            line(x, 200, 0, x, 200, -tunnelSize);
+            line(x, -200, 0, x, -200, -tunnelSize);
+        }
+
+        // 4. Draw Data Monoliths (The 3D Glitches)
+        if (isOptionPressed) {
+            noStroke();
+            fill(255);
+            
+            // Remove old monoliths
+            for (let i = activeMonoliths.length - 1; i >= 0; i--) {
+                let m = activeMonoliths[i];
+                m.z += (travelSpeed + (intensity * 20)); // Move them towards camera
+                
+                push();
+                translate(m.x, m.y, m.z);
+                box(m.w, m.h, m.d);
+                pop();
+                
+                // If it passes the camera, delete it
+                if (m.z > 500) {
+                    activeMonoliths.splice(i, 1);
+                }
+            }
+        }
+    }
+
+    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+    function updateBarUI(barNum) {
+        let bars = ['b1', 'b2', 'b3', 'b4'];
+        bars.forEach((id, index) => {
+            let el = document.getElementById(id);
+            if (index === barNum) {
+                el.innerText = index === 3 ? "!" : "■";
+                el.className = "active-bar";
+            } else { el.innerText = "."; el.className = ""; }
+        });
+    }
+
+    // -- AUDIO INIT --
+    async function initAudio() {
+        await Tone.start();
+        masterGain = new Tone.Gain(0).toDestination();
+
+        // 1. Sub Bass
+        subSynth = new Tone.MembraneSynth({
+            pitchDecay: 0.05, octaves: 2, oscillator: { type: "sine" },
+            envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
+        }).connect(masterGain);
+
+        // 2. Glitch
+        panner = new Tone.Panner(0).connect(masterGain);
+        noiseSynth = new Tone.NoiseSynth({
+            noise: { type: "white" },
+            envelope: { attack: 0.001, decay: 0.05, sustain: 0 }
+        }).connect(panner);
+
+        // 3. Drone
+        dataSynth = new Tone.Oscillator({ type: "sine", frequency: 800 }).start();
+        dataAmp = new Tone.Volume(-100); 
+        dataSynth.connect(dataAmp);
+        dataAmp.connect(masterGain); 
+
+        generatePatterns();
+
+        loop = new Tone.Loop((time) => {
+            globalStep++;
+            let phraseStep = globalStep % 64; 
+            let beatStep = globalStep % 16;   
+            let barNum = Math.floor(phraseStep / 16); 
+
+            Tone.Draw.schedule(() => updateBarUI(barNum), time);
+            if (phraseStep === 0) generatePatterns();
+
+            if (!isOptionPressed) return;
+
+            let doKick, doClick, doDrone;
+            if (barNum < 3) {
+                doKick = patKick[beatStep];
+                doClick = patClick[beatStep];
+                doDrone = patDrone[beatStep];
+            } else {
+                let kickThresh = 0.9 - (intensity * 0.4); 
+                let clickThresh = 0.9 - (intensity * 0.8);
+                let droneThresh = 0.95 - (intensity * 0.6);
+                doKick = (beatStep % 4 === 0) || (Math.random() > kickThresh);
+                doClick = Math.random() > clickThresh;
+                doDrone = Math.random() > droneThresh;
+            }
+
+            // Panning
+            let panTarget = map(mouseX, 0, windowWidth, -1, 1, true); 
+            panner.pan.rampTo(panTarget, 0.1, time);
+
+            // Kick
+            if (doKick) {
+                subSynth.triggerAttackRelease("C1", "8n", time);
+                Tone.Draw.schedule(() => { 
+                    flashIntensity = 150; // Strobe
+                    kickShake = 50; // Camera Jolt
+                }, time);
+            }
+
+            // Click (Spawn 3D Monoliths)
+            if (doClick) {
+                noiseSynth.triggerAttackRelease("32n", time);
+                Tone.Draw.schedule(() => {
+                    // Spawn a random 3D box far away
+                    activeMonoliths.push({
+                        x: random(-400, 400),
+                        y: random(-200, 200),
+                        z: -2000, // Start far away
+                        w: random(10, 50),
+                        h: random(50, 200),
+                        d: random(10, 50)
+                    });
+                }, time);
+            }
+
+            // Drone
+            if (doDrone) {
+                let yNorm = map(mouseY, windowHeight, 0, 0, 1, true);
+                let freq;
+                if (yNorm < 0.3) freq = [200, 300, 400][Math.floor(Math.random()*3)];
+                else if (yNorm < 0.7) freq = [800, 1200, 1500][Math.floor(Math.random()*3)];
+                else freq = [2000, 2500, 3000][Math.floor(Math.random()*3)];
+
+                dataSynth.frequency.setValueAtTime(freq, time); 
+                dataAmp.volume.rampTo(-12, 0.05, time); 
+            } else {
+                dataAmp.volume.rampTo(-100, 0.05, time);
+            }
+
+        }, "16n");
+
+        Tone.Transport.bpm.value = 138;
+        loop.start(0);
+        Tone.Transport.start();
+        isPlaying = true;
+    }
+
+    const slider = document.getElementById('intensitySlider');
+    const valDisplay = document.getElementById('valDisplay');
+    slider.addEventListener('input', (e) => {
+        intensity = parseFloat(e.target.value) / 100;
+        valDisplay.innerText = e.target.value;
+    });
+
+    document.getElementById('overlay').addEventListener('click', () => {
+        if (!isPlaying) {
+            initAudio().then(() => {
+                document.getElementById('overlay').style.display = 'none';
+                document.getElementById('controls').style.display = 'flex';
+                document.body.style.cursor = 'none';
+            }).catch(e => { console.error(e); alert("Audio init failed."); });
+        }
+    });
+</script>
+</body>
+</html>
