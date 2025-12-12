@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v9 (True Sustain)</title>
+    <title>Ikeda Generator v9.1 (Digital Snap)</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; }
         
@@ -75,7 +75,6 @@
     let patClick = new Array(16).fill(false);
     let patDrone = new Array(16).fill(false);
 
-    // Audio Nodes
     let masterGain; 
     let subSynth, noiseSynth, panner, dataSynth, dataAmp, loop;
 
@@ -94,10 +93,9 @@
         if (e.key === 'Alt') {
             isOptionPressed = false;
             
-            // CLOSE VALVE (Instant Silence)
+            // CLOSE VALVE
             if(masterGain) masterGain.gain.rampTo(0, 0.05);
             
-            // Internal cleanup
             if(subSynth) subSynth.triggerRelease();
             if(noiseSynth) noiseSynth.triggerRelease();
             
@@ -117,17 +115,13 @@
     function generatePatterns() {
         let kickThresh = 0.9 - (intensity * 0.4); 
         let clickThresh = 0.9 - (intensity * 0.8);
-        
-        // Lower drone threshold slightly to ensure we get "runs" of true
         let droneThresh = 0.85 - (intensity * 0.5); 
 
         for (let i = 0; i < 16; i++) {
             patKick[i] = (i % 4 === 0) || (Math.random() > kickThresh);
             patClick[i] = Math.random() > clickThresh;
             
-            // Bias towards sustaining:
-            // If previous step was drone, higher chance this step is drone too
-            let sustainBias = (i > 0 && patDrone[i-1]) ? 0.2 : 0;
+            let sustainBias = (i > 0 && patDrone[i-1]) ? 0.3 : 0;
             patDrone[i] = Math.random() > (droneThresh - sustainBias);
         }
     }
@@ -164,7 +158,7 @@
                 for (let y = 0; y < height; y+=gridSize) {
                     line(0, y, width, y);
                 }
-                gridOpacity -= 10; // Slower fade for visuals too
+                gridOpacity -= 10;
             }
         }
 
@@ -240,7 +234,7 @@
 
         // 3. Data Drone (Continuous)
         dataSynth = new Tone.Oscillator({ type: "sine", frequency: 800 }).start();
-        dataAmp = new Tone.Volume(-100); // Start silent
+        dataAmp = new Tone.Volume(-100); 
         dataSynth.connect(dataAmp);
         dataAmp.connect(masterGain); 
 
@@ -297,22 +291,22 @@
                 Tone.Draw.schedule(() => { barcodeActive = false; }, time);
             }
 
-            // --- THE DRONE FIX ---
+            // --- THE SNAP FIX ---
             if (doDrone) {
-                // If the drone is ON, we just tell volume to go UP.
-                // We do NOT tell it to go down.
                 let yNorm = map(mouseY, windowHeight, 0, 0, 1, true);
                 let freq;
                 if (yNorm < 0.3) freq = [200, 300, 400][Math.floor(Math.random()*3)];
                 else if (yNorm < 0.7) freq = [800, 1200, 1500][Math.floor(Math.random()*3)];
                 else freq = [2000, 2500, 3000][Math.floor(Math.random()*3)];
 
-                dataSynth.frequency.rampTo(freq, 0.05, time); // Smooth pitch glide
-                dataAmp.volume.rampTo(-12, 0.05, time); // Ramp UP and stay there
+                // INSTANT CHANGE (No Glide)
+                dataSynth.frequency.setValueAtTime(freq, time); 
+                
+                // Volume still ramps slightly to avoid "pop", but stays up
+                dataAmp.volume.rampTo(-12, 0.05, time); 
                 
                 Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
             } else {
-                // Only if the drone is OFF do we tell volume to go DOWN.
                 dataAmp.volume.rampTo(-100, 0.05, time);
             }
 
