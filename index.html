@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Ikeda Generator v6.1 (Ghost Fix)</title>
+    <title>Ikeda Generator v7 (Envelope Fix)</title>
     <style>
         body { margin: 0; padding: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; user-select: none; cursor: none; }
         
@@ -71,17 +71,23 @@
     let barcodeSeed = 0;
     let gridOpacity = 0;
     
+    // Pattern Memory
     let patKick = new Array(16).fill(false);
     let patClick = new Array(16).fill(false);
     let patDrone = new Array(16).fill(false);
 
-    let subSynth, noiseSynth, panner, dataSynth, dataAmp, loop;
+    // Audio Nodes
+    let masterGain; // The Safety Guillotine
+    let subSynth, noiseSynth, panner, dataSynth, loop;
 
     // -- KEYBOARD LISTENERS --
     window.addEventListener('keydown', (e) => {
         if (e.key === 'Alt' && !isOptionPressed) {
             isOptionPressed = true;
             if (Tone.context.state !== 'running') Tone.context.resume();
+            
+            // Open the Master Gate
+            if(masterGain) masterGain.gain.rampTo(1, 0.05);
         }
     });
 
@@ -89,20 +95,19 @@
         if (e.key === 'Alt') {
             isOptionPressed = false;
             
-            // --- THE GHOST FIX ---
+            // --- THE SAFETY GUILLOTINE ---
+            // 1. Cut the master output instantly
+            if(masterGain) masterGain.gain.rampTo(0, 0.05);
+            
+            // 2. Kill Envelopes (Clean up)
+            if(subSynth) subSynth.triggerRelease();
+            if(noiseSynth) noiseSynth.triggerRelease();
+            if(dataSynth) dataSynth.triggerRelease(); // This is the new fix
+
+            // 3. Kill Visuals
             bgCol = 0;
             barcodeActive = false;
             gridOpacity = 0;
-            
-            if(subSynth) subSynth.triggerRelease();
-            if(noiseSynth) noiseSynth.triggerRelease();
-            
-            if(dataAmp) {
-                // 1. Cancel any volume changes scheduled for the future
-                dataAmp.volume.cancelScheduledValues(Tone.now());
-                // 2. Drop volume to silence immediately
-                dataAmp.volume.rampTo(-100, 0.05);
-            }
         }
     });
 
@@ -177,7 +182,6 @@
             let xStr = "X: " + nf(mouseX, 4, 0).replace(/,/g, '');
             let yStr = "Y: " + nf(mouseY, 4, 0).replace(/,/g, '');
             text(xStr + " | " + yStr, mouseX + 10, mouseY - 10);
-            
             stroke(col);
             noFill();
             rect(mouseX - 10, mouseY - 10, 20, 20);
@@ -210,26 +214,33 @@
         await Tone.start();
         console.log("Audio Context Started");
 
+        // 0. MASTER SAFETY GATE
+        masterGain = new Tone.Gain(0).toDestination(); // Start muted
+
+        // 1. Sub Bass
         subSynth = new Tone.MembraneSynth({
             pitchDecay: 0.05, octaves: 2, oscillator: { type: "sine" },
             envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.1 }
-        }).toDestination();
+        }).connect(masterGain);
 
-        panner = new Tone.Panner(0).toDestination();
+        // 2. Glitch
+        panner = new Tone.Panner(0).connect(masterGain);
         noiseSynth = new Tone.NoiseSynth({
             noise: { type: "white" },
             envelope: { attack: 0.001, decay: 0.05, sustain: 0 }
         }).connect(panner);
 
-        dataSynth = new Tone.Oscillator({ type: "sine", frequency: 800 }).toDestination().start();
-        dataAmp = new Tone.Volume(-100).toDestination(); 
-        dataSynth.connect(dataAmp);
+        // 3. Data Drone (THE FIX: Using Synth instead of Oscillator)
+        dataSynth = new Tone.Synth({
+            oscillator: { type: "sine" },
+            envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.5 }
+        }).connect(masterGain);
+        dataSynth.volume.value = -12; // Set fixed mixing volume
 
         generatePatterns();
 
         loop = new Tone.Loop((time) => {
             globalStep++;
-            
             let phraseStep = globalStep % 64; 
             let beatStep = globalStep % 16;   
             let barNum = Math.floor(phraseStep / 16); 
@@ -238,6 +249,7 @@
 
             if (phraseStep === 0) generatePatterns();
 
+            // Crucial: If key is up, do not schedule ANYTHING
             if (!isOptionPressed) return;
 
             let doKick, doClick, doDrone;
@@ -256,9 +268,11 @@
                 doDrone = Math.random() > droneThresh;
             }
 
+            // Panning
             let panTarget = map(mouseX, 0, windowWidth, -1, 1, true); 
             panner.pan.rampTo(panTarget, 0.1, time);
 
+            // Trigger Kick
             if (doKick) {
                 subSynth.triggerAttackRelease("C1", "8n", time);
                 Tone.Draw.schedule(() => { bgCol = 255; }, time);
@@ -266,6 +280,7 @@
                 Tone.Draw.schedule(() => { bgCol = 0; }, time);
             }
 
+            // Trigger Click
             if (doClick) {
                 noiseSynth.triggerAttackRelease("32n", time);
                 Tone.Draw.schedule(() => {
@@ -276,22 +291,19 @@
                 Tone.Draw.schedule(() => { barcodeActive = false; }, time);
             }
 
+            // Trigger Drone (New Method)
             if (doDrone) {
                 let yNorm = map(mouseY, windowHeight, 0, 0, 1, true);
-                
                 let freq;
                 if (yNorm < 0.3) freq = [200, 300, 400][Math.floor(Math.random()*3)];
                 else if (yNorm < 0.7) freq = [800, 1200, 1500][Math.floor(Math.random()*3)];
                 else freq = [2000, 2500, 3000][Math.floor(Math.random()*3)];
 
-                dataSynth.frequency.setValueAtTime(freq, time);
+                // Instead of volume automation, we Trigger Attack Release
+                // This ensures it has a definite end time
+                dataSynth.triggerAttackRelease(freq, "16n", time);
                 
-                // Double check key state before scheduling volume
-                if(isOptionPressed) {
-                    dataAmp.volume.rampTo(-12, 0.01, time);
-                    dataAmp.volume.rampTo(-100, 0.1, time + 0.1);
-                    Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
-                }
+                Tone.Draw.schedule(() => { gridOpacity = 255; }, time);
             }
 
         }, "16n");
